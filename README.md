@@ -144,7 +144,5 @@ Celulele 37 și 38 salvează toate fișierele necesare ale modelului. Acestea tr
 * tensorflow (pentru experimentele cu rețele neuronale)
 * transformers + torch (pentru experimentele cu BERT)
 
-
-
 **Lese Ioana**
 Lucrare de licență, 2026
