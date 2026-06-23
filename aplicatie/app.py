@@ -9,35 +9,36 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
 
-# ── Load models on startup ──────────────────────────────────────────────────
 BASE = os.path.dirname(os.path.abspath(__file__))
+SEARCH_DIRS = [BASE, os.path.dirname(BASE)]
 
-def find_file(name):
-    """Exact match first, then fuzzy match (handles 'file (1).pkl' suffixes)."""
-    exact = os.path.join(BASE, name)
-    if os.path.exists(exact):
-        return exact
-    stem, ext = os.path.splitext(name)
-    for f in os.listdir(BASE):
-        fs, fe = os.path.splitext(f)
-        if fe == ext and fs.startswith(stem):
-            return os.path.join(BASE, f)
-    raise FileNotFoundError(f"Cannot find '{name}' in {BASE}")
+def find_file(name, candidates=None):
+    names_to_try = [name] + (candidates or [])
+    for search_dir in SEARCH_DIRS:
+        for n in names_to_try:
+            exact = os.path.join(search_dir, n)
+            if os.path.exists(exact):
+                return exact
+        for n in names_to_try:
+            stem, ext = os.path.splitext(n)
+            for f in os.listdir(search_dir):
+                fs, fe = os.path.splitext(f)
+                if fe == ext and fs.startswith(stem):
+                    return os.path.join(search_dir, f)
+    raise FileNotFoundError(
+        f"Cannot find '{name}' (tried {names_to_try}) in {SEARCH_DIRS}"
+    )
 
-nb_model    = joblib.load(find_file("best_model_nb.pkl"))
-tfidf_rec   = joblib.load(find_file("tfidf_vectorizer_recommender.pkl"))
+nb_model    = joblib.load(find_file("best_model_nb.pkl", candidates=["best_model_final.pkl"]))
+tfidf_rec   = joblib.load(find_file("tfidf_vectorizer_recommender.pkl", candidates=["tfidf_final.pkl"]))
 film_matrix = np.load(find_file("film_matrix.npy"))
 film_names  = joblib.load(find_file("film_names.pkl"))
-label_enc   = joblib.load(find_file("label_encoder.pkl"))
+label_enc   = joblib.load(find_file("label_encoder.pkl", candidates=["label_encoder_final.pkl"]))
 
-print("[OK] All models loaded.")
-
-# ── TMDB poster helper ───────────────────────────────────────────────────────
-TMDB_KEY  = "8265bd1679663a7ea12ac168da84d2e8"   # free public key
+TMDB_KEY  = "8265bd1679663a7ea12ac168da84d2e8" 
 TMDB_IMG  = "https://image.tmdb.org/t/p/w300"
 
 def fetch_poster(title: str) -> str:
-    """Return a poster URL from TMDB, or empty string on failure."""
     try:
         q   = urllib.parse.quote(title)
         url = f"https://api.themoviedb.org/3/search/movie?query={q}&api_key={TMDB_KEY}"
@@ -52,14 +53,13 @@ def fetch_poster(title: str) -> str:
     except Exception:
         return ""
 
-# ── HTML ─────────────────────────────────────────────────────────────────────
 HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GuessTheMovie</title>
-  <meta name="description" content="Paste a movie review and find out which film it belongs to, plus similar picks." />
+  <title>CineMatch</title>
+  <meta name="description" content="Write a movie review and find out which film it belongs to." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,900;1,400&display=swap" rel="stylesheet" />
   <style>
@@ -91,7 +91,6 @@ HTML = """<!DOCTYPE html>
       align-items: center;
     }
 
-    /* ── HEADER ── */
     header {
       width: 100%;
       padding: 22px 40px;
@@ -125,7 +124,6 @@ HTML = """<!DOCTYPE html>
     }
     .logo-name span { color: var(--red); }
 
-    /* ── MAIN ── */
     main {
       width: 100%;
       max-width: 720px;
@@ -135,7 +133,6 @@ HTML = """<!DOCTYPE html>
       gap: 28px;
     }
 
-    /* ── HERO ── */
     .hero { text-align: center; }
     .hero h1 {
       font-size: clamp(1.7rem, 4vw, 2.4rem);
@@ -153,7 +150,6 @@ HTML = """<!DOCTYPE html>
       font-size: 0.94rem;
     }
 
-    /* ── INPUT CARD ── */
     .input-card {
       background: var(--card);
       border: 1px solid var(--border);
@@ -441,14 +437,13 @@ HTML = """<!DOCTYPE html>
         <line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/>
       </svg>
     </div>
-    <div class="logo-name">Guess<span>TheMovie</span></div>
+    <div class="logo-name">Cine<span>Match</span></div>
   </a>
 </header>
 
 <main>
   <div class="hero">
-    <h1>Paste a review.<br/><em>We'll name the film.</em></h1>
-    <p>Works best with descriptive reviews. Try plot details, mood, or characters.</p>
+    <h1>Write a review.<br/><em>I will try to guess the film :)</em></h1>
   </div>
 
   <div class="input-card">
@@ -468,8 +463,6 @@ HTML = """<!DOCTYPE html>
 
   <div id="results"></div>
 </main>
-
-<footer>GuessTheMovie &mdash; reviews &amp; recommendations</footer>
 
 <script>
   const textarea  = document.getElementById('review');
@@ -576,11 +569,9 @@ HTML = """<!DOCTYPE html>
 </html>
 """
 
-# ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
     return render_template_string(HTML)
-
 
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -590,7 +581,6 @@ def predict():
         return jsonify({"error": "Review text is empty."}), 400
 
     try:
-        # Classification — Pipeline has its own vectorizer; plain model needs tfidf_rec
         from sklearn.pipeline import Pipeline as _Pipeline
         if isinstance(nb_model, _Pipeline):
             pred_idx = nb_model.predict([review])[0]
