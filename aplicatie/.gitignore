@@ -1,0 +1,21 @@
+# Large model files - regenerate by running the notebook
+*.pkl
+*.npy
+*.pt
+
+# Large datasets
+*.csv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.log
+nb_*.txt
